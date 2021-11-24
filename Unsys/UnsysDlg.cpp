@@ -290,37 +290,76 @@ void CUnsysDlg::drawBeamDeflection()
 	cdc->SelectObject(pen);
 	cdc->MoveTo(100, 100);
 
-	auto y = [&](float x) {
-		return (forceValue / (E * J)) * (
-			(pow(x, 3) * (beamLength - forcePosition) / (6.f * beamLength)) -
-			(pow(x, 3) / 6.f) +
-			(forcePosition * pow(x, 2) * 0.5) -
-			(forcePosition * x / 3.f * beamLength)
-		);
+	// Shorter names
+	float 
+		F = forceValue, 
+		a = forcePosition, 
+		b = beamLength;
+
+	// Integration constatns
+	auto C1_f = [&](int x) -> float {
+		return -(F * pow(a, 3) - 3 * F * pow(a, 2) * b + 2 * F * a * pow(b, 2)) / (6 * b);
 	};
 
+	auto C2_f = [&](int x) -> float {
+		return (F * pow(a, 3) - F * a * pow(b, 2)) / (6 * b);
+	};
+
+	auto y1 = [&](int x, float C1) -> float {
+		return (C1 * x - (F * pow(x, 3) * (a - b)) / (6 * b)) / (E * J);
+	};
+
+	auto y2 = [&](int x, float C2) -> float {
+		return ((F * a * pow(x, 3)) / (6 * b) + C2 * x) / (E * J);
+	};
+
+
+	float maxDeflection = 0;
 	if (shouldDrawDeflectionLine_checkbox.GetCheck())
 	{
-		for (int i = 1; i < beamLength; i += 3)
+		// First section
+		for (int x = 0; x < a; x += 1)
 		{
-			auto val = -y(i);
+			float c1 = C1_f(x);
+			float val = -y1(x, c1);
+
+			if (val > maxDeflection) maxDeflection = val;
+
 			if ((100 + val) > 205)
 			{
-				cdc->MoveTo(100 + i * 0.1, 100 + val);
+				cdc->MoveTo(100 + x * 0.1, 100 + val);
 			}
 			else {
-				cdc->LineTo(100 + i * 0.1, 100 + val);
+				cdc->LineTo(100 + x * 0.1, 100 + val);
 			}
-			
+		}
+
+		cdc->MoveTo(100 + b * 0.1, 100);
+
+		// Second section
+		for (int x = 0; x < b-a; x += 2)
+		{
+			float c2 = C2_f(x);
+			float val = -y2(x, c2);
+
+			if (val > maxDeflection) maxDeflection = val;
+
+			if ((100 + val) > 205)
+			{
+				cdc->MoveTo(100 + b * 0.1 - x * 0.1, 100 + val);
+			}
+			else {
+				cdc->LineTo(100 + b * 0.1 - x * 0.1, 100 + val);
+			}
 		}
 	}
 
 	CString temp;
-	temp.Format(_T("%.2f mm"), -y(((3 - sqrt(3)) / 3.f) * beamLength));
+	temp.Format(_T("%.2f mm"), maxDeflection);
 	maxDeflection_text.SetWindowTextW(temp);
 
 	int pos = deflection_slider.GetPos();
-	temp.Format(_T("%.2f mm"), -y(pos));
+	temp.Format(_T("%.2f mm"), pos < a ? -y1(pos, C1_f(pos)) : -y2(b - pos, C2_f(b-pos)));
 	deflection_text.SetWindowTextW(temp);
 }
 
@@ -372,8 +411,8 @@ void CUnsysDlg::drawDeflectionLocationIndicator()
 
 void CUnsysDlg::computeEverything()
 {
-	RaValue = forceValue * (beamLength - forcePosition) / beamLength;
-	RbValue = forceValue * (1 - (beamLength - forcePosition) / beamLength);
+	RaValue = forceValue * (1 - (forcePosition / beamLength));
+	RbValue = forceValue * forcePosition / beamLength;
 
 	getMaterial();
 	getShape();
@@ -382,15 +421,13 @@ void CUnsysDlg::computeEverything()
 	// Compute bending moment in point
 	if (chosenBendingMomentLocation < forcePosition)
 	{
-		bendingMomentInPoint = forceValue * chosenBendingMomentLocation * (beamLength - forcePosition) / beamLength;
+		bendingMomentInPoint = RaValue * chosenBendingMomentLocation;
 	}
 	else {
-		bendingMomentInPoint =
-			(forceValue * chosenBendingMomentLocation * (beamLength - forcePosition) / beamLength)
-			- (forceValue * (chosenBendingMomentLocation - forcePosition));
+		bendingMomentInPoint = RbValue * (beamLength - chosenBendingMomentLocation);
 	}
 
-	maxBendingMoment = forceValue * forcePosition / beamLength * (beamLength - forcePosition);
+	maxBendingMoment = RaValue * forcePosition;
 	
 	CString temp;
 	temp.Format(_T("%.2f Nm"), maxBendingMoment / 1000.f);
